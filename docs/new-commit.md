@@ -1,1 +1,1 @@
-# New-commit scenario v1
+# New-commit scenario v2 (head advanced)
