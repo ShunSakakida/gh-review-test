@@ -60,12 +60,16 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-            if (eventType !== "review_requested") {
+            if (eventType === "review_requested") {
+              const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: number });
+              const alreadyReviewed = reviews.some(review => review.user?.login?.toLowerCase().startsWith("cursor") && review.commit_id === pr.head.sha);
+              if (alreadyReviewed) { core.info(`Cursor already reviewed commit ${pr.head.sha}`); return; }
+            } else {
               const body = event.comment?.body ?? event.review?.body ?? "";
               const mentioned = body.includes(`@${target}`);
               const authored = pr.user.login === target;
               const requested = pr.requested_reviewers.some(user => user.login === target);
-              const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number: number });
+              const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: number });
               const reviewed = reviews.some(review => review.user?.login === target);
               if (!mentioned && !authored && !requested && !reviewed) return;
             }
