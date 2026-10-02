@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   dispatch:
+    if: github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v8
@@ -34,7 +35,7 @@ jobs:
             const target = "ShunSakakida";
             const event = context.payload;
             const actor = event.sender?.login ?? context.actor;
-            if (["cursor", "cursoragent"].includes(actor)) return;
+            if (event.sender?.type === "Bot" || actor.toLowerCase().startsWith("cursor")) return;
 
             let eventType;
             let number;
