@@ -1,0 +1,93 @@
+name: Cursor review event bridge
+
+on:
+  pull_request_target:
+    types: [review_requested]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number for delivery test
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          CURSOR_WEBHOOK_URL: ${{ vars.CURSOR_REVIEW_WEBHOOK_URL }}
+          CURSOR_AUTH_HEADER: ${{ secrets.CURSOR_REVIEW_AUTH_HEADER }}
+        with:
+          script: |
+            const target = "ShunSakakida";
+            const event = context.payload;
+            const actor = event.sender?.login ?? context.actor;
+            if (["cursor", "cursoragent"].includes(actor)) return;
+
+            let eventType;
+            let number;
+            if (context.eventName === "pull_request_target") {
+              if (event.requested_reviewer?.login !== target) return;
+              eventType = "review_requested";
+              number = event.pull_request.number;
+            } else if (context.eventName === "workflow_dispatch") {
+              eventType = "review_requested";
+              number = Number(event.inputs.pr_number);
+            } else {
+              if (actor === target) return;
+              if (context.eventName === "issue_comment" && !event.issue.pull_request) return;
+              const comment = event.comment ?? event.review;
+              if (!["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association)) return;
+              eventType = context.eventName === "issue_comment" ? "comment_added" :
+                context.eventName === "pull_request_review_comment" ? "review_comment_added" : "review_submitted";
+              number = event.issue?.number ?? event.pull_request?.number;
+            }
+            if (!Number.isInteger(number) || number < 1) throw new Error("Invalid PR number");
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            if (eventType !== "review_requested") {
+              const body = event.comment?.body ?? event.review?.body ?? "";
+              const mentioned = body.includes(`@${target}`);
+              const authored = pr.user.login === target;
+              const requested = pr.requested_reviewers.some(user => user.login === target);
+              const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number: number });
+              const reviewed = reviews.some(review => review.user?.login === target);
+              if (!mentioned && !authored && !requested && !reviewed) return;
+            }
+
+            const url = process.env.CURSOR_WEBHOOK_URL ?? "";
+            const auth = process.env.CURSOR_AUTH_HEADER ?? "";
+            const colon = auth.indexOf(":");
+            if (!url || colon < 1) throw new Error("Cursor webhook configuration is missing");
+            const headerName = auth.slice(0, colon).trim();
+            const headerValue = auth.slice(colon + 1).trim();
+            const payload = {
+              event_type: eventType,
+              event_key: `${context.eventName}:${context.runId}`,
+              pr_url: pr.html_url,
+              target_reviewer: target,
+              actor,
+              comment_url: event.comment?.html_url ?? event.review?.html_url ?? null,
+              comment_body: event.comment?.body ?? event.review?.body ?? null,
+            };
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", [headerName]: headerValue },
+              body: JSON.stringify(payload),
+            });
+            if (!response.ok) throw new Error(`Cursor webhook HTTP ${response.status}`);
+            core.info(`Dispatched ${eventType} for PR #${number}`);
