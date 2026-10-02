@@ -50,7 +50,7 @@ jobs:
               if (actor === target) return;
               if (context.eventName === "issue_comment" && !event.issue.pull_request) return;
               const comment = event.comment ?? event.review;
-              if (!["OWNER", "MEMBER", "COLLABORATOR"].includes(comment.author_association)) return;
+              if (!comment?.body?.trim()) return;
               eventType = context.eventName === "issue_comment" ? "comment_added" :
                 context.eventName === "pull_request_review_comment" ? "review_comment_added" : "review_submitted";
               number = event.issue?.number ?? event.pull_request?.number;
